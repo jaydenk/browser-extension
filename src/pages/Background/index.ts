@@ -28,6 +28,9 @@ import OnInputEnteredDisposition = chrome.omnibox.OnInputEnteredDisposition;
 // } from '../../@/lib/auth/auth.ts';
 
 const browser = getBrowser();
+const supportsBookmarks = !!browser.bookmarks;
+const supportsContextMenus = !!browser.contextMenus;
+const supportsOmnibox = !!browser.omnibox;
 
 // This is the main functions that will be called when a bookmark is created, update or deleted
 // Won't work with axios xhr or something not supported by the browser
@@ -189,11 +192,13 @@ const browser = getBrowser();
 
 // This is for the context menus!
 // Example taken from: https://github.com/GoogleChrome/chrome-extensions-samples/blob/main/api-samples/contextMenus/basic/sample.js
-browser.contextMenus.onClicked.addListener(async (info, tab) => {
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore
-  await genericOnClick(info, tab);
-});
+if (supportsContextMenus) {
+  browser.contextMenus.onClicked.addListener(async (info, tab) => {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
+    await genericOnClick(info, tab);
+  });
+}
 
 // A generic onclick callback function.
 async function genericOnClick(
@@ -240,13 +245,18 @@ async function genericOnClick(
     }
     default:
       // Handle cases where sync is enabled or not
-      if (syncBookmarks) {
+      if (syncBookmarks && supportsBookmarks) {
         browser.bookmarks.create({
           parentId: '1',
           title: tab.title,
           url: tab.url,
         });
       } else {
+        if (syncBookmarks && !supportsBookmarks) {
+          console.warn(
+            'Bookmarks API is not available in this browser. Saving directly to Linkwarden.'
+          );
+        }
         const config = await getConfig();
 
         try {
@@ -276,29 +286,31 @@ async function genericOnClick(
   }
 }
 browser.runtime.onInstalled.addListener(async function () {
-  // Create one test item for each context type.
-  const contexts: ContextType[] = [
-    'page',
-    'selection',
-    'link',
-    'editable',
-    'image',
-    'video',
-    'audio',
-  ];
-  for (const context of contexts) {
-    const title: string = 'Add link to Linkwarden';
+  if (supportsContextMenus) {
+    // Create one test item for each context type.
+    const contexts: ContextType[] = [
+      'page',
+      'selection',
+      'link',
+      'editable',
+      'image',
+      'video',
+      'audio',
+    ];
+    for (const context of contexts) {
+      const title: string = 'Add link to Linkwarden';
+      browser.contextMenus.create({
+        title: title,
+        contexts: [context],
+        id: context,
+      });
+    }
     browser.contextMenus.create({
-      title: title,
-      contexts: [context],
-      id: context,
+      id: 'save-all-tabs',
+      title: 'Save all tabs to Linkwarden',
+      contexts: ['page'],
     });
   }
-  browser.contextMenus.create({
-    id: 'save-all-tabs',
-    title: 'Save all tabs to Linkwarden',
-    contexts: ['page'],
-  });
 
   const { id: tabId } = await getCurrentTabInfo();
   await updateBadge(tabId);
@@ -348,77 +360,79 @@ browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
 // Omnibox implementation
 
-browser.omnibox.onInputStarted.addListener(async () => {
-  const configured = await isConfigured();
-  const description = configured
-    ? 'Search links in linkwarden'
-    : 'Please configure the extension first';
-
-  browser.omnibox.setDefaultSuggestion({
-    description: description,
-  });
-});
-
-browser.omnibox.onInputChanged.addListener(
-  async (
-    text: string,
-    suggest: (arg0: { content: string; description: string }[]) => void
-  ) => {
+if (supportsOmnibox) {
+  browser.omnibox.onInputStarted.addListener(async () => {
     const configured = await isConfigured();
+    const description = configured
+      ? 'Search links in linkwarden'
+      : 'Please configure the extension first';
 
-    if (!configured) {
-      return;
-    }
-
-    const currentBookmarks = await getBookmarksMetadata();
-
-    const searchedBookmarks = currentBookmarks.filter((bookmark) => {
-      return bookmark.name?.includes(text) || bookmark.url.includes(text);
+    browser.omnibox.setDefaultSuggestion({
+      description: description,
     });
+  });
 
-    const bookmarkSuggestions = searchedBookmarks.map((bookmark) => {
-      return {
-        content: bookmark.url,
-        description: bookmark.name || bookmark.url,
-      };
-    });
-    suggest(bookmarkSuggestions);
-  }
-);
+  browser.omnibox.onInputChanged.addListener(
+    async (
+      text: string,
+      suggest: (arg0: { content: string; description: string }[]) => void
+    ) => {
+      const configured = await isConfigured();
 
-// This part was taken https://github.com/sissbruecker/linkding-extension/blob/master/src/background.js Thanks to @sissbruecker
+      if (!configured) {
+        return;
+      }
 
-browser.omnibox.onInputEntered.addListener(
-  async (content: string, disposition: OnInputEnteredDisposition) => {
-    if (!(await isConfigured()) || !content) {
-      return;
+      const currentBookmarks = await getBookmarksMetadata();
+
+      const searchedBookmarks = currentBookmarks.filter((bookmark) => {
+        return bookmark.name?.includes(text) || bookmark.url.includes(text);
+      });
+
+      const bookmarkSuggestions = searchedBookmarks.map((bookmark) => {
+        return {
+          content: bookmark.url,
+          description: bookmark.name || bookmark.url,
+        };
+      });
+      suggest(bookmarkSuggestions);
     }
+  );
 
-    const isUrl = /^http(s)?:\/\//.test(content);
-    const url = isUrl ? content : `lk`;
+  // This part was taken https://github.com/sissbruecker/linkding-extension/blob/master/src/background.js Thanks to @sissbruecker
 
-    // Edge doesn't allow updating the New Tab Page (tested with version 117).
-    // Trying to do so will throw: "Error: Cannot update NTP tab."
-    // As a workaround, open a new tab instead.
-    if (disposition === 'currentTab') {
-      const tabInfo = await getCurrentTabInfo();
-      if (tabInfo.url === 'edge://newtab/') {
-        disposition = 'newForegroundTab';
+  browser.omnibox.onInputEntered.addListener(
+    async (content: string, disposition: OnInputEnteredDisposition) => {
+      if (!(await isConfigured()) || !content) {
+        return;
+      }
+
+      const isUrl = /^http(s)?:\/\//.test(content);
+      const url = isUrl ? content : `lk`;
+
+      // Edge doesn't allow updating the New Tab Page (tested with version 117).
+      // Trying to do so will throw: "Error: Cannot update NTP tab."
+      // As a workaround, open a new tab instead.
+      if (disposition === 'currentTab') {
+        const tabInfo = await getCurrentTabInfo();
+        if (tabInfo.url === 'edge://newtab/') {
+          disposition = 'newForegroundTab';
+        }
+      }
+
+      switch (disposition) {
+        case 'currentTab':
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore
+          await browser.tabs.update({ url });
+          break;
+        case 'newForegroundTab':
+          await browser.tabs.create({ url });
+          break;
+        case 'newBackgroundTab':
+          await browser.tabs.create({ url, active: false });
+          break;
       }
     }
-
-    switch (disposition) {
-      case 'currentTab':
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
-        await browser.tabs.update({ url });
-        break;
-      case 'newForegroundTab':
-        await browser.tabs.create({ url });
-        break;
-      case 'newBackgroundTab':
-        await browser.tabs.create({ url, active: false });
-        break;
-    }
-  }
-);
+  );
+}

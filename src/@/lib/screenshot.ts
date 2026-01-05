@@ -1,5 +1,9 @@
 import browser from 'webextension-polyfill';
 
+const runtimeBrowser = browser as typeof browser & {
+  scripting?: typeof chrome.scripting;
+};
+
 const loadImage = (blob: Blob): Promise<HTMLImageElement> => {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -72,22 +76,41 @@ const drawImagesOnCanvas = async (
 };
 
 async function executeScript(tabId: number, func: any, args: any[] = []) {
-  if (typeof chrome.scripting !== 'undefined') {
-    const results = await chrome.scripting.executeScript({
+  const scriptingApi =
+    typeof chrome !== 'undefined' && chrome.scripting
+      ? chrome.scripting
+      : runtimeBrowser.scripting;
+
+  const tabsApi = runtimeBrowser.tabs as typeof runtimeBrowser.tabs & {
+    executeScript?: (
+      tabId: number,
+      details: { code: string }
+    ) => Promise<unknown[]>;
+  };
+
+  if (scriptingApi?.executeScript) {
+    const results = await scriptingApi.executeScript({
       target: { tabId },
       func,
       args,
     });
     return results[0]?.result;
-  } else {
-    const results = await browser.tabs.executeScript(tabId, {
+  }
+
+  if (tabsApi.executeScript) {
+    const results = await tabsApi.executeScript(tabId, {
       code: `(${func})(${args.map((arg) => JSON.stringify(arg)).join(',')})`,
     });
     return results[0];
   }
+
+  throw new Error('Script execution API is not available in this browser.');
 }
 
 async function captureFullPageScreenshot(): Promise<Blob> {
+  if (!runtimeBrowser.tabs?.captureVisibleTab) {
+    throw new Error('captureVisibleTab is not available in this browser.');
+  }
   const tabs = await browser.tabs.query({ active: true, currentWindow: true });
   const tab = tabs[0];
   if (!tab || !tab.id) {
