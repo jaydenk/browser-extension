@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && cp ./manifest.json dist/manifest.json",
-    "build:safari": "tsc && vite build && cp ./manifest.safari.json dist/manifest.json",
+    "build:safari": "tsc && vite build && cp ./safari/manifest.safari.json dist/manifest.json",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },

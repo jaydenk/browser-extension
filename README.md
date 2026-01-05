@@ -59,6 +59,7 @@ After the above command, use the `/dist` folder as an unpacked extension in your
 ### Safari (local build)
 
 Safari Web Extensions require an Xcode wrapper app for local development.
+Safari-specific files live under `safari/` (including `safari/manifest.safari.json` and the generated Xcode project in `safari/project/`).
 
 1) Build the Safari variant:
 ```
@@ -67,10 +68,10 @@ npm run build:safari
 
 2) Convert the extension and generate an Xcode project:
 ```
-xcrun safari-web-extension-converter dist --project-location safari --bundle-identifier com.linkwarden.extension --app-name Linkwarden
+xcrun safari-web-extension-converter dist --project-location safari/project --bundle-identifier com.linkwarden.extension --app-name Linkwarden
 ```
 
-3) Open the generated Xcode project in `safari/`, run it, then enable the extension in Safari.
+3) Open the generated Xcode project in `safari/project/Linkwarden/`, run it, then enable the extension in Safari.
 
 Notes:
 - Safari will only list the extension after the wrapper app has been run from Xcode.
